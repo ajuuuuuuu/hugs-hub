@@ -47,19 +47,36 @@ export function buildTree(
 
   // Chains: an anchor (partner rooted in the tree) plus orphan spouses.
   // First spouse sits LEFT of the anchor, second and later sit RIGHT.
+  // Anchor selection: a person with ≥2 spouses is always the anchor (husband
+  // in middle when there are multiple wives). Otherwise prefer the one with
+  // parents in tree. Snap ALL spouses to the anchor — even if a spouse has
+  // parents in the visible tree — so wives sit adjacent to their husband.
   const chains = new Map<string, string[]>();
   const orphanToAnchor = new Map<string, string>();
-  spouseRels.forEach((r) => {
-    let anchor = r.person1Id;
-    let other = r.person2Id;
-    if (hasParents(r.person2Id) && !hasParents(r.person1Id)) {
-      anchor = r.person2Id;
-      other = r.person1Id;
-    }
-    if (hasParents(other)) return; // spouse has own parents in tree; dagre places them
+  const spouseCountOf = (id: string) => spousesOf.get(id)?.length ?? 0;
+  // Process anchors with the most spouses first so a multi-wife husband claims
+  // his wives before any single-spouse rule re-assigns them.
+  const orderedSpouseRels = spouseRels.slice().sort((a, b) => {
+    const ma = Math.max(spouseCountOf(a.person1Id), spouseCountOf(a.person2Id));
+    const mb = Math.max(spouseCountOf(b.person1Id), spouseCountOf(b.person2Id));
+    return mb - ma;
+  });
+  orderedSpouseRels.forEach((r) => {
+    const c1 = spouseCountOf(r.person1Id);
+    const c2 = spouseCountOf(r.person2Id);
+    let anchor: string, other: string;
+    if (c1 > 1 && c2 <= 1) { anchor = r.person1Id; other = r.person2Id; }
+    else if (c2 > 1 && c1 <= 1) { anchor = r.person2Id; other = r.person1Id; }
+    else if (hasParents(r.person1Id) && !hasParents(r.person2Id)) { anchor = r.person1Id; other = r.person2Id; }
+    else if (hasParents(r.person2Id) && !hasParents(r.person1Id)) { anchor = r.person2Id; other = r.person1Id; }
+    else { anchor = r.person1Id; other = r.person2Id; }
     if (orphanToAnchor.has(other)) return;
+    if (orphanToAnchor.has(anchor)) return; // anchor is already someone else's spouse; skip
     const arr = chains.get(anchor) ?? [];
+    // Preserve marriage order on the anchor's spouse list.
+    const spouseList = spousesOf.get(anchor) ?? [];
     arr.push(other);
+    arr.sort((x, y) => spouseList.indexOf(x) - spouseList.indexOf(y));
     chains.set(anchor, arr);
     orphanToAnchor.set(other, anchor);
   });
