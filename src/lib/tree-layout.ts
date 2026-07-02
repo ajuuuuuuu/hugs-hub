@@ -248,7 +248,18 @@ export function buildTree(
     list.forEach((blk) => {
       const shift =
         cursor === Number.NEGATIVE_INFINITY ? 0 : Math.max(0, cursor - blk.left);
-      if (shift > 0) blk.members.forEach((m) => (pos.get(m)!.x += shift));
+      if (shift > 0) {
+        // Shift the anchor's whole subtree so children don't detach.
+        const moved = new Set<string>();
+        blk.members.forEach((m) => {
+          descendantsOf(m).forEach((d) => {
+            if (!moved.has(d)) {
+              pos.get(d)!.x += shift;
+              moved.add(d);
+            }
+          });
+        });
+      }
       cursor = blk.right + shift + MIN_GAP;
     });
   });
