@@ -133,20 +133,6 @@ export function buildTree(
     pos.set(p.id, { x: n?.x ?? 0, y: n?.y ?? 0 });
   });
 
-  // Pass 1: enforce per-union child order left→right by reassigning x slots.
-  childRelsOf.forEach((arr, pid) => {
-    if (orphanToAnchor.has(pid)) return; // mother edges follow the father's ordering
-    if (arr.length < 2) return;
-    const kids = arr.map((r) => r.person2Id);
-    const slots = kids
-      .map((k) => pos.get(k)!.x)
-      .slice()
-      .sort((a, b) => a - b);
-    kids.forEach((k, i) => {
-      pos.get(k)!.x = slots[i];
-    });
-  });
-
   // Pass 2: snap orphan spouses next to their anchor (1st left, 2nd+ right).
   chains.forEach((orphans, anchor) => {
     const ap = pos.get(anchor)!;
@@ -154,6 +140,64 @@ export function buildTree(
       const op = pos.get(o)!;
       op.x = ap.x + offsetOf(i) * SLOT;
       op.y = ap.y;
+    });
+  });
+
+  // Collect all descendants of a person so we can shift a subtree as one block.
+  const descendantsOf = (root: string): string[] => {
+    const out: string[] = [];
+    const stack = [root];
+    const seen = new Set<string>();
+    while (stack.length) {
+      const cur = stack.pop()!;
+      if (seen.has(cur)) continue;
+      seen.add(cur);
+      out.push(cur);
+      (childRelsOf.get(cur) ?? []).forEach((r) => stack.push(r.person2Id));
+    }
+    return out;
+  };
+  const shiftSubtree = (root: string, dx: number) => {
+    if (dx === 0) return;
+    descendantsOf(root).forEach((id) => {
+      pos.get(id)!.x += dx;
+    });
+  };
+
+  // Pass 2.5: cluster children by union — F1's kids under the F1↔anchor midpoint,
+  // unknown-mother kids under the anchor, F2's kids under the anchor↔F2 midpoint, etc.
+  const CHILD_SLOT = W + MIN_GAP;
+  childRelsOf.forEach((arr, pid) => {
+    if (orphanToAnchor.has(pid)) return; // mother edges follow the father's ordering
+    const anchorPos = pos.get(pid)!;
+    const spouses = spousesOf.get(pid) ?? [];
+    const groupsById = new Map<number, string[]>();
+    arr.forEach((r) => {
+      const k = groupKeyOf(pid, r.person2Id);
+      const g = groupsById.get(k) ?? [];
+      g.push(r.person2Id);
+      groupsById.set(k, g);
+    });
+    const clusters = Array.from(groupsById.entries())
+      .map(([k, kids]) => {
+        let partnerX: number | null = null;
+        if (k === 1) partnerX = null;
+        else if (k === 0 && spouses[0]) partnerX = pos.get(spouses[0])?.x ?? null;
+        else if (k >= 2 && spouses[k - 1]) partnerX = pos.get(spouses[k - 1])?.x ?? null;
+        const center = partnerX === null ? anchorPos.x : (anchorPos.x + partnerX) / 2;
+        return { k, kids, center, width: kids.length * CHILD_SLOT };
+      })
+      .sort((a, b) => a.center - b.center);
+    let cursor = Number.NEGATIVE_INFINITY;
+    clusters.forEach((c) => {
+      const desiredLeft = c.center - c.width / 2;
+      const left = cursor === Number.NEGATIVE_INFINITY ? desiredLeft : Math.max(desiredLeft, cursor);
+      c.kids.forEach((kid, i) => {
+        const targetX = left + CHILD_SLOT / 2 + i * CHILD_SLOT;
+        const dx = targetX - pos.get(kid)!.x;
+        shiftSubtree(kid, dx);
+      });
+      cursor = left + c.width + MIN_GAP;
     });
   });
 
